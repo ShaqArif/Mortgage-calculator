@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Calculator, Home, Briefcase, PoundSterling, Lock, Unlock } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Home, Briefcase, PoundSterling } from 'lucide-react';
 import InputSection from './InputSection';
 import ResultsSummary from './ResultsSummary';
 
@@ -35,6 +35,17 @@ const reverseStampDutyAndPrice = (targetAmount) => {
     if (targetAmount <= 958750) return ((targetAmount - 250000) / 1.05) + 250000;
     if (targetAmount <= 1591250) return ((targetAmount - 958750) / 1.10) + 925000;
     return ((targetAmount - 1591250) / 1.12) + 1500000;
+};
+
+/** Capital repayment mortgage: fixed monthly payment (same formula as standard UK amortising loans). */
+const calculateMonthlyRepayment = (principal, annualRatePercent, termYears) => {
+    if (principal <= 0 || termYears <= 0) return 0;
+    const n = Math.round(termYears * 12);
+    if (n <= 0) return 0;
+    const r = annualRatePercent / 100 / 12;
+    if (r === 0) return principal / n;
+    const factor = Math.pow(1 + r, n);
+    return principal * (r * factor) / (factor - 1);
 };
 
 const AffordabilityCalculator = () => {
@@ -82,6 +93,12 @@ const AffordabilityCalculator = () => {
      */
     const [triangleDriver, setTriangleDriver] = useState(null);
 
+    /** If there is a cash shortfall, optional rate/term to estimate monthly borrowing cost for that amount. */
+    const [deficitFinancing, setDeficitFinancing] = useState({
+        annualInterestRate: 5.5,
+        termYears: 25,
+    });
+
     // 5. Computed Output State
     const [results, setResults] = useState({
         grossSaleProceeds: 0,
@@ -101,6 +118,16 @@ const AffordabilityCalculator = () => {
             currency: 'GBP',
             maximumFractionDigits: 0
         }).format(amount);
+    };
+
+    const deficitPrincipal = Math.max(0, -results.shortfallOrSurplus);
+    const monthlyDeficitRepayment = useMemo(
+        () => calculateMonthlyRepayment(deficitPrincipal, deficitFinancing.annualInterestRate, deficitFinancing.termYears),
+        [deficitPrincipal, deficitFinancing.annualInterestRate, deficitFinancing.termYears]
+    );
+
+    const handleDeficitFinancingChange = (field, value) => {
+        setDeficitFinancing((prev) => ({ ...prev, [field]: value }));
     };
 
     const performCalculations = useCallback(() => {
@@ -375,6 +402,9 @@ const AffordabilityCalculator = () => {
                     triangleMode={triangleMode}
                     onToggleTriangleLock={toggleTriangleLock}
                     onTriangleDesiredFocus={() => setTriangleDriver(null)}
+                    deficitFinancing={deficitFinancing}
+                    onDeficitFinancingChange={handleDeficitFinancingChange}
+                    monthlyDeficitRepayment={monthlyDeficitRepayment}
                 />
             </div>
 

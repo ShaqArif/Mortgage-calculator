@@ -12,6 +12,8 @@ const InputSection = ({
     isLocked = false,
     onToggleLock,
     onFocus,
+    /** Whole numbers (e.g. years) — not currency, no % suffix */
+    plainInteger = false,
 }) => {
 
     const handleValueChange = (values) => {
@@ -20,7 +22,7 @@ const InputSection = ({
         onChange(floatValue === undefined ? 0 : floatValue);
     };
 
-    const isCurrency = type === "number" && step === "1"; // Hacky check: percentages often pass step="0.1"
+    const isCurrency = type === "number" && step === "1" && !plainInteger; // Hacky check: percentages often pass step="0.1"
 
     return (
         <div className="flex flex-col gap-1.5 focus-within:z-10 relative">
@@ -48,8 +50,8 @@ const InputSection = ({
                     disabled={isLocked}
                     thousandSeparator={isCurrency}
                     prefix={isCurrency ? '£' : ''}
-                    suffix={!isCurrency ? '%' : ''}
-                    decimalScale={isCurrency ? 0 : 2}
+                    suffix={isCurrency ? '' : plainInteger ? '' : '%'}
+                    decimalScale={isCurrency ? 0 : plainInteger ? 0 : 2}
                     allowNegative={false}
                     className={`
             w-full px-4 text-base py-2.5 rounded-xl transition-all shadow-inner
