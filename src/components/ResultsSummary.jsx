@@ -2,7 +2,7 @@ import React from 'react';
 import { TrendingUp, TrendingDown, ArrowRight, Lock, Unlock } from 'lucide-react';
 import { NumericFormat } from 'react-number-format';
 
-const ResultsSummary = ({ results, finalPosition, onPositionChange }) => {
+const ResultsSummary = ({ results, finalPosition, onPositionChange, triangleMode, onToggleTriangleLock, onTriangleDesiredFocus }) => {
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('en-GB', {
@@ -87,22 +87,28 @@ const ResultsSummary = ({ results, finalPosition, onPositionChange }) => {
                 <div className="flex justify-between items-center mb-3">
                     <label className="text-sm font-medium text-slate-300">Set Desired Position</label>
                     <button
-                        onClick={() => onPositionChange('desiredPositionLocked', !finalPosition.desiredPositionLocked)}
-                        className={`p-1.5 rounded-lg transition-colors ${finalPosition.desiredPositionLocked
+                        type="button"
+                        onClick={() => onToggleTriangleLock('desired')}
+                        className={`p-1.5 rounded-lg transition-colors ${triangleMode === 'desired'
                             ? 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 ring-1 ring-rose-500/20'
                             : 'bg-black/20 text-slate-400 hover:text-slate-200 hover:bg-white/10'
                             }`}
-                        title={finalPosition.desiredPositionLocked ? "Unlock desired position" : "Lock desired position"}
+                        title={triangleMode === 'desired'
+                            ? 'Desired position is fixed as a target; sale or purchase adjusts to match.'
+                            : 'Surplus/shortfall is computed from sale + purchase (click to fix desired position as a target)'}
                     >
-                        {finalPosition.desiredPositionLocked ? <Lock size={16} /> : <Unlock size={16} />}
+                        {triangleMode === 'desired' ? <Lock size={16} /> : <Unlock size={16} />}
                     </button>
                 </div>
 
                 <div className="relative">
                     <NumericFormat
-                        value={finalPosition.desiredPositionLocked ? finalPosition.desiredPosition : results.shortfallOrSurplus}
-                        onValueChange={(values) => onPositionChange('desiredPosition', values.floatValue || 0)}
-                        disabled={!finalPosition.desiredPositionLocked}
+                        value={triangleMode === 'forward' ? results.shortfallOrSurplus : finalPosition.desiredPosition}
+                        onValueChange={(values) => onPositionChange('desiredPosition', values.floatValue ?? 0)}
+                        onFocus={() => {
+                            if (triangleMode !== 'forward' && onTriangleDesiredFocus) onTriangleDesiredFocus();
+                        }}
+                        disabled={triangleMode === 'forward'}
                         thousandSeparator={true}
                         prefix={'£'}
                         decimalScale={0}
@@ -110,15 +116,15 @@ const ResultsSummary = ({ results, finalPosition, onPositionChange }) => {
                         className={`
                w-full px-4 text-lg font-semibold py-3 border rounded-xl shadow-inner transition-all
                focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none
-               ${finalPosition.desiredPositionLocked
-                                ? 'bg-black/40 border-white/20 text-white shadow-lg'
-                                : 'bg-black/20 border-white/5 text-slate-500 cursor-not-allowed'
+               ${triangleMode === 'forward'
+                                ? 'bg-black/20 border-white/5 text-slate-500 cursor-not-allowed'
+                                : 'bg-black/40 border-white/20 text-white shadow-lg'
                             }
              `}
                     />
-                    {!finalPosition.desiredPositionLocked && (
+                    {triangleMode === 'forward' && (
                         <p className="text-xs text-slate-500 mt-2">
-                            Lock this field to set a target position and auto-calculate other fields.
+                            Sale price and new purchase price are inputs; this value follows from them. Lock sale, purchase, or desired position to set a fixed value and solve for another.
                         </p>
                     )}
                 </div>

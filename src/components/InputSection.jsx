@@ -10,7 +10,8 @@ const InputSection = ({
     step = "1",
     lockable = false,
     isLocked = false,
-    onToggleLock
+    onToggleLock,
+    onFocus,
 }) => {
 
     const handleValueChange = (values) => {
@@ -43,6 +44,7 @@ const InputSection = ({
                 <NumericFormat
                     value={value}
                     onValueChange={handleValueChange}
+                    onFocus={onFocus}
                     disabled={isLocked}
                     thousandSeparator={isCurrency}
                     prefix={isCurrency ? '£' : ''}

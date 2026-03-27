@@ -42,7 +42,6 @@ const AffordabilityCalculator = () => {
     const [houseSale, setHouseSale] = useState({
         askingPrice: 350000,
         salePrice: 350000,
-        salePriceLocked: false,
         estateAgentFeePercent: 1.5,
         conveyancingFees: 1500,
         movingCosts: 1000,
@@ -58,7 +57,6 @@ const AffordabilityCalculator = () => {
     const [housePurchase, setHousePurchase] = useState({
         newAskingPrice: 450000,
         newPurchasePrice: 450000,
-        newPurchasePriceLocked: false,
         stampDuty: 0,
         legalFees: 2000,
         surveyCosts: 800,
@@ -67,9 +65,22 @@ const AffordabilityCalculator = () => {
     // 4. Final Position State
     const [finalPosition, setFinalPosition] = useState({
         desiredPosition: 0,
-        desiredPositionLocked: false,
         calculatedPosition: 0,
     });
+
+    /**
+     * Triangle mode: exactly one lock, or forward.
+     * - forward: sale + purchase are inputs; surplus/shortfall (desired) is computed.
+     * - sale | purchase | desired: that value is fixed; the other two are inputs and the solver adjusts one of them (see lastEditedTriangleRef).
+     */
+    const [triangleMode, setTriangleMode] = useState('forward');
+
+    /**
+     * Which price field the user is treating as the "free" input in triangle modes.
+     * Set from focus + direct edits (not from solver-driven value updates) so programmatic
+     * purchase/sale updates don't flip the solver and fight typing.
+     */
+    const [triangleDriver, setTriangleDriver] = useState(null);
 
     // 5. Computed Output State
     const [results, setResults] = useState({
@@ -101,33 +112,43 @@ const AffordabilityCalculator = () => {
 
         const mortgageClearance = mortgagePayoff.outstandingMortgage + mortgagePayoff.earlyRepaymentCharges;
 
-        // SCENARIO 1: Desired Position is locked, and Sale Price is locked -> calculate New Purchase Price
-        if (finalPosition.desiredPositionLocked && houseSale.salePriceLocked && !housePurchase.newPurchasePriceLocked) {
-            const saleCosts = (currentSalePrice * (houseSale.estateAgentFeePercent / 100)) + houseSale.conveyancingFees + houseSale.movingCosts;
-            const netCashFromSale = currentSalePrice - saleCosts - mortgageClearance;
-
-            // targetCashRequired = netCashFromSale - desiredPosition
-            const targetCashRequired = netCashFromSale - finalPosition.desiredPosition;
+        const solvePurchaseFromSaleAndDesired = (salePrice, desiredSurplus) => {
+            const sc = (salePrice * (houseSale.estateAgentFeePercent / 100)) + houseSale.conveyancingFees + houseSale.movingCosts;
+            const net = salePrice - sc - mortgageClearance;
+            const targetCashRequired = net - desiredSurplus;
             const targetPurchaseAndStamp = targetCashRequired - housePurchase.legalFees - housePurchase.surveyCosts;
+            return reverseStampDutyAndPrice(targetPurchaseAndStamp);
+        };
 
-            currentPurchasePrice = reverseStampDutyAndPrice(targetPurchaseAndStamp);
-        }
-
-        // SCENARIO 2: Desired Position is locked, and Purchase Price is locked -> calculate Sale Price
-        else if (finalPosition.desiredPositionLocked && housePurchase.newPurchasePriceLocked && !houseSale.salePriceLocked) {
-            const calculatedStampDuty = calculateStampDuty(currentPurchasePrice);
-            const purchaseCosts = calculatedStampDuty + housePurchase.legalFees + housePurchase.surveyCosts;
-            const totalCashRequired = currentPurchasePrice + purchaseCosts;
-
-            // targetNetCashFromSale = totalCashRequired + desiredPosition
-            const targetNetCashFromSale = totalCashRequired + finalPosition.desiredPosition;
-
-            // targetNetCashFromSale + conveyancing + moving + mortgageClearance = salePrice * (1 - agentFee%)
+        const solveSaleFromPurchaseAndDesired = (purchasePrice, desiredSurplus) => {
+            const sd = calculateStampDuty(purchasePrice);
+            const pc = sd + housePurchase.legalFees + housePurchase.surveyCosts;
+            const totalReq = purchasePrice + pc;
+            const targetNetCashFromSale = totalReq + desiredSurplus;
             const agentMultiplier = 1 - (houseSale.estateAgentFeePercent / 100);
-            currentSalePrice = (targetNetCashFromSale + houseSale.conveyancingFees + houseSale.movingCosts + mortgageClearance) / agentMultiplier;
+            return (targetNetCashFromSale + houseSale.conveyancingFees + houseSale.movingCosts + mortgageClearance) / agentMultiplier;
+        };
+
+        if (triangleMode === 'sale') {
+            currentSalePrice = houseSale.salePrice;
+            if (triangleDriver !== 'purchase') {
+                currentPurchasePrice = solvePurchaseFromSaleAndDesired(currentSalePrice, finalPosition.desiredPosition);
+            }
+        } else if (triangleMode === 'purchase') {
+            currentPurchasePrice = housePurchase.newPurchasePrice;
+            if (triangleDriver !== 'sale') {
+                currentSalePrice = solveSaleFromPurchaseAndDesired(currentPurchasePrice, finalPosition.desiredPosition);
+            }
+        } else if (triangleMode === 'desired') {
+            if (triangleDriver === 'purchase') {
+                currentPurchasePrice = housePurchase.newPurchasePrice;
+                currentSalePrice = solveSaleFromPurchaseAndDesired(currentPurchasePrice, finalPosition.desiredPosition);
+            } else {
+                currentSalePrice = houseSale.salePrice;
+                currentPurchasePrice = solvePurchaseFromSaleAndDesired(currentSalePrice, finalPosition.desiredPosition);
+            }
         }
 
-        // Standard Forward Calculation
         const saleCosts = (currentSalePrice * (houseSale.estateAgentFeePercent / 100)) + houseSale.conveyancingFees + houseSale.movingCosts;
         const netCashFromSale = currentSalePrice - saleCosts - mortgageClearance;
 
@@ -137,7 +158,6 @@ const AffordabilityCalculator = () => {
 
         const shortfallOrSurplus = netCashFromSale - totalCashRequired;
 
-        // Apply state updates if they drifted
         if (currentPurchasePrice !== housePurchase.newPurchasePrice || calculatedStampDuty !== housePurchase.stampDuty) {
             setHousePurchase(prev => ({ ...prev, newPurchasePrice: currentPurchasePrice, stampDuty: calculatedStampDuty }));
         }
@@ -155,23 +175,48 @@ const AffordabilityCalculator = () => {
             shortfallOrSurplus,
         });
 
-        if (!finalPosition.desiredPositionLocked) {
-            setFinalPosition(prev => ({ ...prev, calculatedPosition: shortfallOrSurplus }));
-        } else {
-            setFinalPosition(prev => ({ ...prev, calculatedPosition: finalPosition.desiredPosition }));
+        let nextDesiredPosition = finalPosition.desiredPosition;
+        if (triangleMode === 'forward') {
+            nextDesiredPosition = shortfallOrSurplus;
+        } else if (triangleMode === 'sale' && triangleDriver === 'purchase') {
+            nextDesiredPosition = shortfallOrSurplus;
+        } else if (triangleMode === 'purchase' && triangleDriver === 'sale') {
+            nextDesiredPosition = shortfallOrSurplus;
         }
+
+        setFinalPosition(prev => ({
+            ...prev,
+            calculatedPosition: shortfallOrSurplus,
+            desiredPosition: nextDesiredPosition,
+        }));
 
         setIsCalculating(false);
     }, [
-        houseSale.salePrice, houseSale.salePriceLocked, houseSale.estateAgentFeePercent, houseSale.conveyancingFees, houseSale.movingCosts,
+        houseSale.salePrice, houseSale.estateAgentFeePercent, houseSale.conveyancingFees, houseSale.movingCosts,
         mortgagePayoff.outstandingMortgage, mortgagePayoff.earlyRepaymentCharges,
-        housePurchase.newPurchasePrice, housePurchase.newPurchasePriceLocked, housePurchase.legalFees, housePurchase.surveyCosts, housePurchase.stampDuty,
-        finalPosition.desiredPosition, finalPosition.desiredPositionLocked,
+        housePurchase.newPurchasePrice, housePurchase.legalFees, housePurchase.surveyCosts, housePurchase.stampDuty,
+        finalPosition.desiredPosition,
+        triangleMode,
+        triangleDriver,
         isCalculating
     ]);
 
+    const toggleTriangleLock = (field) => {
+        setTriangleDriver(null);
+        setTriangleMode((prev) => {
+            const next = prev === field ? 'forward' : field;
+            if (next !== 'forward' && prev === 'forward') {
+                queueMicrotask(() => {
+                    setFinalPosition((fp) => ({ ...fp, desiredPosition: fp.calculatedPosition }));
+                });
+            }
+            return next;
+        });
+    };
+
     // Recalculate whenever inputs change
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: derive results state from inputs
         performCalculations();
     }, [performCalculations]);
 
@@ -188,6 +233,10 @@ const AffordabilityCalculator = () => {
     };
 
     const handlePositionChange = (field, value) => {
+        // Only reset driver in "desired fixed" mode. In sale/purchase locked modes, clearing here
+        // after editing desired would leave driver null and re-solve purchase/sale on every keystroke,
+        // blocking manual edits to the other price.
+        if (field === 'desiredPosition' && triangleMode === 'desired') setTriangleDriver(null);
         setFinalPosition(prev => ({ ...prev, [field]: value }));
     };
 
@@ -216,9 +265,12 @@ const AffordabilityCalculator = () => {
                             label="Sale Price"
                             value={houseSale.salePrice}
                             onChange={v => handleSaleChange('salePrice', v)}
+                            onFocus={() => {
+                                if (triangleMode === 'desired' || triangleMode === 'purchase') setTriangleDriver('sale');
+                            }}
                             lockable={true}
-                            isLocked={houseSale.salePriceLocked}
-                            onToggleLock={() => handleSaleChange('salePriceLocked', !houseSale.salePriceLocked)}
+                            isLocked={triangleMode === 'sale'}
+                            onToggleLock={() => toggleTriangleLock('sale')}
                         />
                         <InputSection
                             label={`Estate Agent Fees (${formatCurrency(houseSale.salePrice * (houseSale.estateAgentFeePercent / 100))})`}
@@ -282,9 +334,12 @@ const AffordabilityCalculator = () => {
                             label="New Purchase Price"
                             value={housePurchase.newPurchasePrice}
                             onChange={v => handlePurchaseChange('newPurchasePrice', v)}
+                            onFocus={() => {
+                                if (triangleMode === 'desired' || triangleMode === 'sale') setTriangleDriver('purchase');
+                            }}
                             lockable={true}
-                            isLocked={housePurchase.newPurchasePriceLocked}
-                            onToggleLock={() => handlePurchaseChange('newPurchasePriceLocked', !housePurchase.newPurchasePriceLocked)}
+                            isLocked={triangleMode === 'purchase'}
+                            onToggleLock={() => toggleTriangleLock('purchase')}
                         />
                         {/* Read only calculated field */}
                         <div className="flex flex-col gap-1.5 justify-center mt-1">
@@ -313,7 +368,14 @@ const AffordabilityCalculator = () => {
 
             {/* Right Column (Span 1/3): Sticky Summary & Final Position */}
             <div className="xl:col-span-1 self-start sticky top-6">
-                <ResultsSummary results={results} finalPosition={finalPosition} onPositionChange={handlePositionChange} />
+                <ResultsSummary
+                    results={results}
+                    finalPosition={finalPosition}
+                    onPositionChange={handlePositionChange}
+                    triangleMode={triangleMode}
+                    onToggleTriangleLock={toggleTriangleLock}
+                    onTriangleDesiredFocus={() => setTriangleDriver(null)}
+                />
             </div>
 
         </div>
